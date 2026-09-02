@@ -80,19 +80,57 @@ herdr agent start builder \
 echo
 echo "=== Phase 1: parallel reverse engineering ==="
 
-herdr agent prompt mechanics \
-    "$(cat harness/prompts/mechanics.md)"
+prompt_and_wait() {
+    local agent="$1"
+    local prompt_file="$2"
+    local result
+    local status
 
-herdr agent prompt portability \
-    "$(cat harness/prompts/portability.md)"
+    result="$(
+        herdr agent prompt "$agent" \
+            "$(cat "$prompt_file")" \
+            --wait \
+            --until idle \
+            --until done \
+            --until blocked
+    )"
 
-herdr agent wait mechanics \
-    --until idle \
-    --until done
+    printf '%s\n' "$result"
 
-herdr agent wait portability \
-    --until idle \
-    --until done
+    status="$(
+        printf '%s\n' "$result" |
+            jq -r '.result.agent.agent_status // empty'
+    )"
+
+    case "$status" in
+        idle|done)
+            ;;
+        blocked)
+            echo "agent $agent is blocked and requires interaction" >&2
+            return 1
+            ;;
+        *)
+            echo "agent $agent ended in unexpected status: ${status:-unknown}" >&2
+            return 1
+            ;;
+    esac
+}
+
+prompt_and_wait mechanics harness/prompts/mechanics.md &
+mechanics_job=$!
+
+prompt_and_wait portability harness/prompts/portability.md &
+portability_job=$!
+
+phase1_failed=0
+
+wait "$mechanics_job" || phase1_failed=1
+wait "$portability_job" || phase1_failed=1
+
+if (( phase1_failed != 0 )); then
+    echo "Phase 1 failed." >&2
+    exit 1
+fi
 
 test -s docs/GAME_SPEC.md
 test -s docs/PORT_SPEC.md
