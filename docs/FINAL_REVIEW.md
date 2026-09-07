@@ -1,31 +1,27 @@
-VERDICT: FAIL
+VERDICT: PASS
 
-The port is close, and no P0 issue was found, but one P1 presentation bug remains in a required operating mode.
+Independent validation: 2026-09-06. No remaining P0 or P1 issue was found that prevents this from being a credible standalone port. The four requested specifications/reports were re-read, and the current implementation was inspected against the reference engine, level generator, and QML input/frame handling.
 
-## Remaining P1
+The previous ASCII failure is resolved in `internal/render/render.go`: `Renderer.compose` now derives brick glyphs from both half-cell materials. The former minimum-size invisible bricks remain visible. The new `internal/render/ascii_test.go` checks all 25 layouts at seven sizes and four color profiles (700 ASCII frames), plus the actual `L1-3-2` rectangle in normal, reinforced, damaged, steel, special, and destroyed states. These checks pass on the current source. As a negative control, the same regression was run against the old renderer through a temporary Go overlay; it reproduced the four material failures. Production files were not altered for that check.
 
-### P1 — Minimum-size ASCII rendering can hide live bricks
+This closes the prior P1-5 gap and supports the corrected build report. The change affects presentation only; world coordinates, collision rules, scoring, and timers remain in the framework-independent Game Core. The other prior P1 corrections—stable held-direction actions, capability migration, separate legacy one-shot guards, uniform letterboxing, and distinct capsule identities—are present and tested.
 
-`internal/render/render.go`, `Renderer.buildStatic` (the ASCII loop near line 259), emits a brick glyph only for terminal rows in `(y0 + 1) / 2 ... y1 / 2`. When projection at a short viewport places a brick wholly in an odd half-cell, that range is empty. `Renderer.compose` then renders the same cell as an ordinary `.` playfield cell even though the Game Core still includes the brick in collision detection.
+## Evidence
 
-A read-only overlay probe against the final source reproduced this at the documented playable minimum of 40x20. Four live level-1 bricks (`L1-3-2`, `L1-3-4`, `L1-3-7`, and `L1-3-16`) had no ASCII brick glyph. At 60x24 and 80x24, eight live level-1 bricks had no glyph. This makes collision-active geometry invisible and changes the recognizable level mosaic, so the ASCII fallback is not consistently playable as required by `docs/PORT_SPEC.md`.
+Validation used Go 1.27.1 on Linux 7.2.3 x86-64, AMD Ryzen 7 5800H.
 
-Expected correction: collapse both projected half-cells into the ASCII cell and emit the appropriate brick symbol whenever either half has brick semantics. Add a regression over real campaign layouts at 40x20 (and other supported sizes) that detects live bricks/occupied regions represented only as playfield dots.
+- Fresh `go test -count=1 ./...`, `go test -race -count=1 ./...`, `go vet ./...`, `go build ./...`, and `go mod verify` passed.
+- All four reference test programs passed with `node --test reference/plugin-source/tests/*.js`.
+- Native and `CGO_ENABLED=0` Linux amd64/arm64 builds passed. `file` and `readelf -d` confirmed static release binaries without dynamic sections. Native and static amd64 binaries were executed; arm64 was inspected but not executed.
+- Real PTY checks passed for attract/start, 40x20 ASCII brick visibility, paddle movement and lease expiry, launch, pause/resume, shrink to 39x19, recovery through 120x40 and back to 40x20, and Escape exit. Separate Ctrl+C, SIGINT, and SIGTERM checks restored alternate screen, cursor, and terminal attributes without panic. External SIGINT returned 1 after cleanup; the other exits returned 0. Non-TTY launch returned the expected diagnostic and status 2.
+- PTY runs used an isolated state directory, no desktop-session variables, and a PATH containing no helper programs. Source/import inspection confirmed no required Omarchy, plugin-host, compositor, hardcoded user path, shell-command, or network integration. The launcher filters the transitive color detector's `TMUX` helper trigger. Game Core imports remain only `math`, `sort`, and `strings`; the two selected presentation dependencies remain pinned.
+- The 36,000-frame simulated ten-minute soak passed its retained-heap and goroutine checks in 31.18 seconds. Three-sample renderer medians were 1.80 ms for a cached one-ball frame, 1.81 ms for 100 balls, and 2.09 ms for a static rebuild, below the 16.7 ms composition budget.
 
-This also means the P1-5 resolution claim in `docs/BUILD_REPORT.md`—that brick cells have explicit ASCII shapes—is not fully supported. Existing golden tests cover four color profiles without enabling `Options.ASCII`; the ASCII semantic test uses oversized synthetic bricks at 120x75, so it does not exercise the failing projection case.
+No additional gameplay, collision, timing, resize, or portability discrepancy warranting P0/P1 was found. The documented silent audio, simplified effects, standalone exit behavior, and terminal input approximations remain declared deviations. This validation does not establish behavior in every terminal emulator; no fresh vulnerability scan or syscall trace was performed.
 
-## Validation evidence
+## Remaining P2
 
-- `go test ./...`, `go test -race ./...`, and `go vet ./...` passed.
-- The reference JavaScript suite passed: 4/4 tests with `node --test reference/plugin-source/tests/*.js`.
-- Native build and `CGO_ENABLED=0` Linux amd64/arm64 cross-builds passed; the cross-built binaries were confirmed static ELF executables.
-- A 10-minute simulated renderer soak passed. Cached-frame benchmarks remained within the 16.7 ms frame budget (about 2.5–3.5 ms per 120x75 frame on this machine).
-- Real PTY smoke checks covered launch, input, shrink below 40x20, restoration to 120x40, pause, Escape, Ctrl+C, SIGINT, and SIGTERM. Alternate-screen, cursor, and termios state were restored in every case, with no panic.
-- A non-TTY launch failed cleanly with the documented diagnostic and exit status 2.
-- Source inspection found no production dependency on Omarchy, the plugin host, a compositor, hardcoded user paths, shell commands, external audio players, or runtime network access. The framework-independent Game Core and adapter/presentation separation remain intact, and no additional collision, scoring, timing, or state-transition discrepancy was found.
+- `internal/render/render.go`, `clone`/`Renderer.compose`: cached 120x75 frames still allocate approximately 1.26 MB across 17,000 allocations. Buffer reuse and less allocation during style composition would reduce GC pressure; current measured timing passes.
+- `internal/app/model.go`, legacy input: the documented 140 ms direction lease cannot reproduce physical releases or uninterrupted movement across initial auto-repeat delay. The 800 ms initial/180 ms quiescence guards can suppress intentional identical presses, including repeated secret tokens. Enhanced event reporting avoids this ambiguity; broader terminal testing and clearer tuning guidance remain useful.
 
-## Remaining P2 issues
-
-- `Renderer.Render` still clones and composes the complete framebuffer each frame. Measurements remain around 1.26 MB and 17,000 allocations for a cached 120x75 frame. This passes the timing budget but is avoidable GC pressure.
-- Legacy terminals cannot report releases. The documented one-shot guard can suppress an intentional identical action within 800 ms (or before 180 ms of post-repeat quiescence), and directional movement remains less faithful during the terminal's initial repeat delay.
-- After fixing the P1, add true ASCII golden/property coverage at every required viewport; the current multi-size golden test exercises color profiles but not ASCII mode.
+Only `docs/FINAL_REVIEW.md` was changed by this validation. Existing implementation changes and the reference tree were preserved.

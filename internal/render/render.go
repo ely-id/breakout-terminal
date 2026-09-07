@@ -247,24 +247,6 @@ func (r *Renderer) buildStatic(s game.Snapshot, w, h int) [][]halfCell {
 			y1 = y0
 		}
 		fillSemantic(c, x0, y0, x1, y1, role, kind)
-		if r.opts.ASCII {
-			ch := '='
-			if b.Steel {
-				ch = '#'
-			} else if b.MaxHP > 1 && b.HP == b.MaxHP {
-				ch = '%'
-			} else if b.HP > 0 && b.MaxHP > 1 && b.HP < b.MaxHP {
-				ch = '+'
-			}
-			for y := (y0 + 1) / 2; y <= y1/2; y++ {
-				for x := x0; x <= x1; x++ {
-					if y >= 0 && y < h && x >= 0 && x < w {
-						c[y][x].r = ch
-						c[y][x].fg = role
-					}
-				}
-			}
-		}
 		if b.Special != "" {
 			glyph := map[string]rune{"DHH": 'D', "RYAN": 'R', "OMARCHY": 'O', "37": '7'}[b.Special]
 			x, y := t.x(b.X+b.W/2), t.hy(b.Y+b.H/2)/2
@@ -691,7 +673,14 @@ func (r *Renderer) compose(c [][]halfCell) string {
 			fg, bg := cell.fg, ""
 			if ch == 0 {
 				if r.opts.ASCII {
-					if cell.top == "playfield" || cell.bottom == "playfield" {
+					// Collapse both half-cells. Prefer the lower brick when
+					// two materials share a cell, matching board draw order;
+					// empty playfield must never mask either occupied half.
+					if glyph := asciiBrickGlyph(cell.bottomKind); glyph != 0 {
+						ch, fg = glyph, cell.bottom
+					} else if glyph := asciiBrickGlyph(cell.topKind); glyph != 0 {
+						ch, fg = glyph, cell.top
+					} else if cell.top == "playfield" || cell.bottom == "playfield" {
 						ch = '.'
 						fg = "muted"
 					} else {
@@ -727,6 +716,20 @@ func (r *Renderer) compose(c [][]halfCell) string {
 		}
 	}
 	return out.String()
+}
+
+func asciiBrickGlyph(kind string) rune {
+	switch kind {
+	case "normal":
+		return '='
+	case "reinforced":
+		return '%'
+	case "damaged":
+		return '+'
+	case "steel":
+		return '#'
+	}
+	return 0
 }
 
 func monoGlyph(cell halfCell) rune {

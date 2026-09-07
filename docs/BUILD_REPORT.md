@@ -1,6 +1,72 @@
 # Build report
 
-Date: 2026-09-02
+Initial validation: 2026-09-02. Final-review correction: 2026-09-06.
+
+## Final-review correction and validation — 2026-09-06
+
+The sole remaining P1 in `docs/FINAL_REVIEW.md` was confirmed and corrected.
+The old ASCII brick loop started at `(y0 + 1) / 2`, skipping a brick whose
+entire projection occupied one odd half-cell. The new campaign regression
+failed on the original implementation; the isolated real `L1-3-2` rectangle
+rendered as a playfield dot for normal, reinforced, damaged, and steel states.
+This was a gap in the earlier P1-5 resolution, whose tests missed small ASCII
+projections.
+
+ASCII composition now derives the material glyph from both stored half-cell
+semantics. Either occupied half produces `=`, `%`, `+`, or `#` for normal,
+reinforced, damaged, or steel respectively. If two materials share a terminal
+cell, the lower occupied half takes precedence, consistent with campaign row
+draw order. Explicit special labels keep precedence over material glyphs.
+The separate ASCII row loop was removed. Game Core geometry, collision rules,
+simulation, and Unicode rendering were not changed. Remaining P2 performance
+and legacy-input work was not undertaken.
+
+Regression coverage in `internal/render/ascii_test.go` includes:
+
+- Real snapshots of all 25 campaign layouts at 40x20, 41x20, 60x24, 80x24,
+  60x30, 80x50, and 120x75, with ASCII explicitly enabled in all four color
+  profiles (700 rendered frames). The test independently projects live
+  non-boss collision rectangles, including steel, and rejects any occupied
+  terminal cell represented only by a dot or space. It also checks ASCII
+  purity and exact frame dimensions. Boss art continues to have its separate
+  existing tests.
+- The reported `L1-3-2` rectangle at its actual campaign coordinates and the
+  minimum viewport, verifying the exact material, special, and destroyed
+  glyphs without enlarging the brick.
+- Top-only, bottom-only, and both-half occupancy for each material, including
+  identical color roles, mixed-material precedence, and special-label priority.
+
+Focused renderer tests ran first, reproduced the bug before the correction,
+then passed after it. Final validation on Linux 7.2.3 x86-64, Go 1.27.1,
+AMD Ryzen 7 5800H:
+
+- `go test ./internal/render -count=1`: pass, including the unchanged Unicode
+  golden hashes and new ASCII properties.
+- `go test -count=1 ./...`, `go test -race -count=1 ./...`, `go vet ./...`,
+  `go build ./...`, and `go mod verify`: pass.
+- `node --test reference/plugin-source/tests/*.js`: all four reference suites
+  pass.
+- Native executable and `CGO_ENABLED=0` Linux amd64/arm64 builds: pass.
+  `file` confirms static release binaries; `readelf -d` reports no dynamic
+  section for either. Native and static amd64 binaries were actually launched;
+  arm64 was cross-built and inspected, not executed on this x86-64 machine.
+- Real PTY smoke: ASCII play at 40x20, movement/lease expiry, launch,
+  pause/resume, shrink to 39x19, recovery through 120x40 and back to 40x20,
+  and Escape exit pass. Separate Ctrl+C, SIGINT, and SIGTERM cases restore
+  alternate screen, cursor, and termios state. External SIGINT exits one after
+  cleanup; the other exits are zero. Non-TTY launch returns the documented
+  diagnostic and status two.
+- `BREAKOUT_SOAK=1 go test ./internal/render -run TestTenMinuteSimulatedSoak
+  -count=1 -v`: 36,000 frames pass in 29.69 seconds with retained-heap and
+  goroutine checks.
+- Existing renderer benchmarks (`-bench . -benchmem -benchtime=1s -count=3`):
+  medians 1.85 ms cached one-ball, 1.85 ms cached 100-ball, and 2.15 ms static
+  rebuild, below 16.7 ms. Cached allocation cost remains about 1.26 MB and
+  17,000 allocations per frame; no P2 optimization is claimed.
+- `git diff --check`: pass. Only the renderer, its new regression tests, and
+  this report changed. Protected specifications and reference sources remain
+  untouched. Dependency versions did not change; the vulnerability-scan
+  evidence below belongs to the original validation and was not rerun here.
 
 ## Implemented
 
@@ -90,7 +156,7 @@ renderer change, not a small low-risk P2 fix. Fresh benchmarks still pass the
 frame budget and the soak still shows no retained leak, but the allocation cost
 is recorded under Known limitations. No review finding was otherwise rejected.
 
-## Tests executed
+## Original validation — 2026-09-02
 
 Validation passed on Linux 7.2.2 x86-64 with Go 1.27.0 (building the Go 1.25
 module) and an AMD Ryzen 7 5800H:
